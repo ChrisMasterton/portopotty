@@ -1,0 +1,19 @@
+[package]
+name = "port-o-potty"
+version = "0.1.0"
+description = "Port range listener monitor + kill"
+authors = ["you"]
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "1", features = [] }
+
+[dependencies]
+tauri = { version = "1", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+netstat2 = "0.9"
+sysinfo = "0.33"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
