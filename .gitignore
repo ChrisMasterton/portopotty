@@ -8,3 +8,15 @@ yarn-error.log*
 pnpm-debug.log*
 *.log
 .env
+# Agent working state
+.agents/task-work-queue.md
+.agents/task-blocked.md
+.agents/current-task-plan.md
+
+# Agent-generated repo analysis
+.agents/repo-fingerprint.md
+
+# Review packet outputs
+.agents/review-packets/index.md
+.agents/review-packets/*.md
+!.agents/review-packets/TEMPLATE.md
