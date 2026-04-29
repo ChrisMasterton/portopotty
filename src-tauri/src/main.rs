@@ -11,7 +11,12 @@ use tauri::ActivationPolicy;
 
 use netstat2::{get_sockets_info, AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, TcpState};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    process::{Command, Output},
+    thread,
+    time::Duration,
+};
 use sysinfo::{Pid, ProcessesToUpdate, System};
 
 #[derive(Debug, Clone, Deserialize)]
@@ -96,10 +101,7 @@ fn scan_ports(ranges: Vec<PortRange>) -> Result<Vec<ListenerInfo>, String> {
 }
 
 fn docker_published_containers_by_port() -> HashMap<u16, DockerPublishedContainer> {
-    let output = match std::process::Command::new("docker")
-        .args(["ps", "--format", "{{json .}}"])
-        .output()
-    {
+    let output = match docker_output(&["ps", "--format", "{{json .}}"]) {
         Ok(output) => output,
         Err(_) => return HashMap::new(),
     };
@@ -183,26 +185,34 @@ fn parse_docker_host_ports(host: &str) -> Vec<u16> {
 fn disconnect_listener(port: u16, pid: u32) -> Result<String, String> {
     if let Some(container) = docker_published_containers_by_port().get(&port) {
         stop_docker_container(container)?;
+        if !wait_until_port_closes(port, 1_500) {
+            return Err(format!(
+                "stopped container {}, but port {} is still listening",
+                container.name, port
+            ));
+        }
         return Ok(format!("stopped container {}", container.name));
     }
 
     kill_pid(pid)?;
+    if !wait_until_port_closes(port, 1_500) {
+        return Err(format!(
+            "killed pid {}, but port {} is still listening",
+            pid, port
+        ));
+    }
     Ok(format!("killed pid {}", pid))
 }
 
 fn stop_docker_container(container: &DockerPublishedContainer) -> Result<(), String> {
-    let stop = std::process::Command::new("docker")
-        .args(["stop", "--timeout", "2", &container.id])
-        .output()
+    let stop = docker_output(&["stop", "--timeout", "2", &container.id])
         .map_err(|e| format!("docker stop failed to start: {e}"))?;
 
     if stop.status.success() {
         return Ok(());
     }
 
-    let kill = std::process::Command::new("docker")
-        .args(["kill", &container.id])
-        .output()
+    let kill = docker_output(&["kill", &container.id])
         .map_err(|e| format!("docker kill failed to start: {e}"))?;
 
     if kill.status.success() {
@@ -219,6 +229,30 @@ fn stop_docker_container(container: &DockerPublishedContainer) -> Result<(), Str
             kill_err.trim()
         ))
     }
+}
+
+fn docker_output(args: &[&str]) -> std::io::Result<Output> {
+    let candidates = [
+        "docker",
+        "/opt/homebrew/bin/docker",
+        "/usr/local/bin/docker",
+        "/Applications/Docker.app/Contents/Resources/bin/docker",
+    ];
+    let mut last_error = None;
+
+    for candidate in candidates {
+        match Command::new(candidate).args(args).output() {
+            Ok(output) => return Ok(output),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                last_error = Some(error);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "docker command not found")
+    }))
 }
 
 #[tauri::command]
@@ -242,26 +276,75 @@ fn kill_pid(pid: u32) -> Result<(), String> {
 
     #[cfg(not(windows))]
     {
-        let term = std::process::Command::new("kill")
+        let term = Command::new("kill")
             .args(["-TERM", &pid.to_string()])
             .status()
             .map_err(|e| e.to_string())?;
 
-        if term.success() {
+        if !term.success() {
+            return Err(format!("kill -TERM failed (exit {:?})", term.code()));
+        }
+
+        if wait_until_pid_exits(pid, 800) {
             return Ok(());
         }
 
-        let kill = std::process::Command::new("kill")
+        let kill = Command::new("kill")
             .args(["-KILL", &pid.to_string()])
             .status()
             .map_err(|e| e.to_string())?;
 
-        if kill.success() {
+        if kill.success() && wait_until_pid_exits(pid, 800) {
             Ok(())
+        } else if kill.success() {
+            Err(format!("PID {pid} accepted SIGKILL but is still running"))
         } else {
             Err(format!("kill failed (exit {:?})", kill.code()))
         }
     }
+}
+
+#[cfg(not(windows))]
+fn wait_until_pid_exits(pid: u32, timeout_ms: u64) -> bool {
+    let attempts = (timeout_ms / 100).max(1);
+    for _ in 0..attempts {
+        if !pid_is_running(pid) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    !pid_is_running(pid)
+}
+
+#[cfg(not(windows))]
+fn pid_is_running(pid: u32) -> bool {
+    Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+fn wait_until_port_closes(port: u16, timeout_ms: u64) -> bool {
+    let attempts = (timeout_ms / 100).max(1);
+    for _ in 0..attempts {
+        if !port_has_listener(port) {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    !port_has_listener(port)
+}
+
+fn port_has_listener(port: u16) -> bool {
+    let Ok(sockets) = get_sockets_info(AddressFamilyFlags::IPV4 | AddressFamilyFlags::IPV6, ProtocolFlags::TCP) else {
+        return false;
+    };
+
+    sockets.into_iter().any(|socket| match socket.protocol_socket_info {
+        ProtocolSocketInfo::Tcp(tcp) => tcp.local_port == port && tcp.state == TcpState::Listen,
+        _ => false,
+    })
 }
 
 fn main() {

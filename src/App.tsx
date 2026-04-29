@@ -13,6 +13,7 @@ type Listener = {
 
 type SortKey = "port" | "process" | "pid" | "started";
 type SortDir = "asc" | "desc";
+type ActionStatus = { kind: "info" | "success" | "error"; message: string };
 
 function formatUptime(secondsAgo?: number | null) {
   if (secondsAgo == null) return "—";
@@ -48,6 +49,9 @@ export default function App() {
   const [listeners, setListeners] = useState<Listener[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [actionStatus, setActionStatus] = useState<ActionStatus | null>(null);
+  const [confirmKey, setConfirmKey] = useState<string | null>(null);
+  const [disconnectingKey, setDisconnectingKey] = useState<string | null>(null);
   const [inFocus, setInFocus] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>("port");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
@@ -81,6 +85,7 @@ export default function App() {
       setListeners(Array.from(uniq.values()));
     } catch (e) {
       setError(String(e));
+      setActionStatus({ kind: "error", message: `Refresh failed: ${String(e)}` });
     } finally {
       setBusy(false);
     }
@@ -114,20 +119,37 @@ export default function App() {
     return () => window.clearInterval(id);
   }, [inFocus, refresh]);
 
+  function listenerKey(listener: Listener) {
+    return `${listener.port}:${listener.pid}`;
+  }
+
   async function disconnect(listener: Listener) {
+    const key = listenerKey(listener);
     const target = listener.container_name
       ? `container ${listener.container_name} on port ${listener.port}`
       : `PID ${listener.pid}`;
-    const ok = confirm(`Disconnect ${target}?`);
-    if (!ok) return;
+    if (confirmKey !== key) {
+      setConfirmKey(key);
+      setActionStatus({ kind: "info", message: `Ready to disconnect ${target}. Click Confirm to continue.` });
+      return;
+    }
+
+    setConfirmKey(null);
+    setDisconnectingKey(key);
     setError(null);
+    setActionStatus({ kind: "info", message: `Disconnecting ${target}...` });
     try {
-      await invoke("disconnect_listener", { port: listener.port, pid: listener.pid });
+      const result = await invoke<string>("disconnect_listener", { port: listener.port, pid: listener.pid });
       setListeners((prev) => prev.filter((l) => l.port !== listener.port || l.pid !== listener.pid));
+      setActionStatus({ kind: "success", message: result });
       // also refresh soon to catch port rebinds
       setTimeout(() => refresh(), 600);
     } catch (e) {
-      setError(String(e));
+      const message = String(e);
+      setError(message);
+      setActionStatus({ kind: "error", message });
+    } finally {
+      setDisconnectingKey(null);
     }
   }
 
@@ -207,6 +229,7 @@ export default function App() {
       </div>
 
       {error ? <div className="error">{error}</div> : null}
+      {actionStatus ? <div className={`status ${actionStatus.kind}`}>{actionStatus.message}</div> : null}
 
       <div className="grid">
         <div className="panel">
@@ -324,7 +347,7 @@ export default function App() {
               </thead>
               <tbody>
                 {sortedListeners.map((l) => (
-                  <tr key={`${l.port}:${l.pid}`}>
+                  <tr key={`${l.port}:${l.pid}`} className={confirmKey === listenerKey(l) ? "confirming" : undefined}>
                     <td>{l.port}</td>
                     <td>
                       {l.container_name ? (
@@ -339,8 +362,18 @@ export default function App() {
                     <td className="muted">{l.pid}</td>
                     <td className="muted">{formatUptime(l.started_seconds_ago)}</td>
                     <td>
-                      <button className="btn danger" onClick={() => disconnect(l)}>
-                        {l.container_name ? "Stop" : "Kill"}
+                      <button
+                        className={`btn danger ${confirmKey === listenerKey(l) ? "confirm" : ""}`}
+                        onClick={() => disconnect(l)}
+                        disabled={disconnectingKey === listenerKey(l)}
+                      >
+                        {disconnectingKey === listenerKey(l)
+                          ? "Working..."
+                          : confirmKey === listenerKey(l)
+                            ? "Confirm"
+                            : l.container_name
+                              ? "Stop"
+                              : "Kill"}
                       </button>
                     </td>
                   </tr>

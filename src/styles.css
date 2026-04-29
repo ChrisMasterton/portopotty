@@ -127,6 +127,12 @@ input[type="number"] {
   color: color-mix(in srgb, var(--danger), var(--text) 35%);
 }
 
+.btn.confirm {
+  background: color-mix(in srgb, var(--danger), transparent 82%);
+  border-color: var(--danger);
+  color: var(--text);
+}
+
 .btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
@@ -202,6 +208,33 @@ input[type="number"] {
   padding: 10px 12px;
   border-radius: 10px;
   margin-bottom: 12px;
+}
+
+.status {
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  border-radius: 10px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.status.info {
+  color: color-mix(in srgb, var(--accent), var(--text) 25%);
+  border-color: color-mix(in srgb, var(--accent), var(--border) 55%);
+}
+
+.status.success {
+  color: color-mix(in srgb, var(--ok), var(--text) 25%);
+  border-color: color-mix(in srgb, var(--ok), var(--border) 55%);
+}
+
+.status.error {
+  color: color-mix(in srgb, var(--danger), var(--text) 25%);
+  border-color: color-mix(in srgb, var(--danger), var(--border) 55%);
+}
+
+tr.confirming td {
+  background: color-mix(in srgb, var(--danger), transparent 94%);
 }
 
 .empty {
