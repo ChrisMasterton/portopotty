@@ -7,6 +7,8 @@ type Listener = {
   pid: number;
   process_name?: string | null;
   started_seconds_ago?: number | null;
+  container_id?: string | null;
+  container_name?: string | null;
 };
 
 type SortKey = "port" | "process" | "pid" | "started";
@@ -112,13 +114,16 @@ export default function App() {
     return () => window.clearInterval(id);
   }, [inFocus, refresh]);
 
-  async function kill(pid: number) {
-    const ok = confirm(`Kill PID ${pid}?`);
+  async function disconnect(listener: Listener) {
+    const target = listener.container_name
+      ? `container ${listener.container_name} on port ${listener.port}`
+      : `PID ${listener.pid}`;
+    const ok = confirm(`Disconnect ${target}?`);
     if (!ok) return;
     setError(null);
     try {
-      await invoke("kill_pid", { pid });
-      setListeners((prev) => prev.filter((l) => l.pid !== pid));
+      await invoke("disconnect_listener", { port: listener.port, pid: listener.pid });
+      setListeners((prev) => prev.filter((l) => l.port !== listener.port || l.pid !== listener.pid));
       // also refresh soon to catch port rebinds
       setTimeout(() => refresh(), 600);
     } catch (e) {
@@ -321,12 +326,21 @@ export default function App() {
                 {sortedListeners.map((l) => (
                   <tr key={`${l.port}:${l.pid}`}>
                     <td>{l.port}</td>
-                    <td>{l.process_name ?? "—"}</td>
+                    <td>
+                      {l.container_name ? (
+                        <>
+                          <span>{l.container_name}</span>
+                          <span className="muted"> container via {l.process_name ?? "proxy"}</span>
+                        </>
+                      ) : (
+                        l.process_name ?? "—"
+                      )}
+                    </td>
                     <td className="muted">{l.pid}</td>
                     <td className="muted">{formatUptime(l.started_seconds_ago)}</td>
                     <td>
-                      <button className="btn danger" onClick={() => kill(l.pid)}>
-                        Kill
+                      <button className="btn danger" onClick={() => disconnect(l)}>
+                        {l.container_name ? "Stop" : "Kill"}
                       </button>
                     </td>
                   </tr>
